@@ -14,7 +14,7 @@ import os
 import array
 from random import randint
 import urequests
-from bt import *
+from bt import btr
 
 wdt = machine.WDT(timeout=25000)
 wdt.feed()
@@ -40,6 +40,7 @@ tim1 = machine.Timer(1)
 cards = array.array("I")
 def get_cards(host, mac, auth = None, timeout=5):
     print(f'getting cards from {host}/get_cards/{mac}')
+    gc.collect()
     try:
         if auth:
             response = urequests.get(f'{host}/get_cards/{mac}', headers={'Authorization': f'Basic {auth}'}, timeout=timeout)
@@ -127,6 +128,7 @@ print(config)
 
 aps = config['aps']
 server_address = config['server_address']
+allow_offline = config['allow_offline']
 
 ota_files=[]
 for file in config['ota_filenames']:
@@ -149,11 +151,7 @@ async def wifi_connect(aps, delay_in_msec: int = 3000) -> network.WLAN:
         for ap in aps:
             for attempt in range(1,3):
                 print(f"WiFi connecting to:{ap['ssid']}.Round {count}. Attempt {attempt}.")
-                #led[0] = (0,0,1)
-                #led.write()
                 await a.sleep_ms(500)
-                #led[0] = (0,0,0)
-                #led.write()
                 status = wifi.status()
                 print(f"status: {status}")
                 if wifi.isconnected(): #status == net.STAT_GOT_IP:
@@ -165,18 +163,16 @@ async def wifi_connect(aps, delay_in_msec: int = 3000) -> network.WLAN:
                         print(f'exception:{e}')
                 await a.sleep_ms(delay_in_msec)
             if wifi.isconnected():
-                #led[0] = (1,0,0)
-                #led.write()
                 break
         count += 1
-        if count>5:
-            machine.reset()
+        if count>1
+            break #machine.reset()
 
     if wifi.isconnected():
         print("ifconfig: {}".format(wifi.ifconfig()))
     else:
-        print("Wifi not connected.")
-    
+        print("Wifi not connected.")  
+        
     return wifi
 
 unlock_time = config['unlock_time']
@@ -206,7 +202,6 @@ async def heart_beat():
         c = c+1
         if c>10 :
             c=0
-             
             if connected:
                 await ws.send('*')
             print(f'Connected:{connected}')
@@ -232,6 +227,10 @@ async def read_loop():
     global card
     
     await a.sleep_ms(1000)
+
+    load_cards()
+    
+    bt.scan()
     
     while True:
         await a.sleep_ms(10)
@@ -276,71 +275,81 @@ async def main_loop():
     global ws
     global server_last_seen
     global connected
+       
     
-    wifi = await wifi_connect(aps)
-    mac = ubinascii.hexlify(wifi.config('mac')).decode().upper()
-    print(f'mac:{mac}')
-    
-    wdt.feed()
-    print('checking ota update...')
-    ota_update(config['ota_server_address'], config['model'], ota_files)
-    
-    wdt.feed()
-    print("Local time before synchronization：%s" %str(time.localtime()))
-    try:    
-        ntptime.settime()
-    except Exception as e:
-        print(f'ntp error: {e}')
-    print("Local time after synchronization：%s" %str(time.localtime()))
-     
-    bt.scan()
     
     ec = 0
-    while True:           
-        try:
-            connected = False
-            print (f'connecting to {server_address}/{mac}')
-            if not await ws.handshake(f'{server_address}/{mac}'):
-                print('Handshake error.')
-                raise Exception('Handshake error.')
-            if ws is not None:
-                #if await ws.open(): 
-                await ws.send('{"model":"%s"}' %config['model'])
-                ec = 0
-            #while await ws.open():
-            server_last_seen = time.ticks_ms()
-            connected = True
-            while True:
-                data = await ws.recv()
-                if data is not None:
-                    server_last_seen = time.ticks_ms()
-                    print(f"ws: {data}")
-                    js = None
-                    try:
-                        js = json.loads(data)
-                    except:
-                        pass    
-                    if js:
-                        if 'open' in js:
-                            await sesam_open(js['open'])
-                        if 'cmd' in js:
-                            cmd = js['cmd']
-                            if cmd == 'reset':
-                                machine.reset()
-                            elif cmd == 'sync':
-                                print('sync')
-                                get_cards(host = config['config_host'], mac = mac)
-                                load_cards()
-                                get_config(host = config['config_host'], mac = mac)
-                else:
-                    break
-                await a.sleep_ms(50)        
-        except Exception as ex:
-            print(f'Exceptionn: {ex}')
-            #ec = ec+1
-            #if ec > 5:
-            #    machine.reset()
-            await a.sleep(60)
+    
+    while True:
+        wifi = await wifi_connect(aps)
+  
+        if wifi.isconnected():
+            mac = ubinascii.hexlify(wifi.config('mac')).decode().upper()
+            print(f'mac:{mac}')
+            print('checking ota update...')
+            wdt.feed()
+            ota_update(config['ota_server_address'], config['model'], ota_files)
+            wdt.feed()
+                        
+            print("Local time before synchronization：%s" %str(time.localtime()))
+            try:    
+                ntptime.settime()
+            except Exception as e:
+                print(f'ntp error: {e}')
+            print("Local time after synchronization：%s" %str(time.localtime()))
+        
+            get_cards(host = config['config_host'], mac = mac)
+
+
+
+        while wifi.isconnected():           
+            try:
+                connected = False
+                print (f'connecting to {server_address}/{mac}')
+                if not await ws.handshake(f'{server_address}/{mac}'):
+                    print('Handshake error.')
+                    raise Exception('Handshake error.')
+                if ws is not None:
+                    #if await ws.open(): 
+                    await ws.send('{"model":"%s"}' %config['model'])
+                    ec = 0
+                #while await ws.open():
+                server_last_seen = time.ticks_ms()
+                connected = True
+                while True:
+                    data = await ws.recv()
+                    if data is not None:
+                        server_last_seen = time.ticks_ms()
+                        print(f"ws: {data}")
+                        js = None
+                        try:
+                            js = json.loads(data)
+                        except:
+                            pass    
+                        if js:
+                            if 'open' in js:
+                                await sesam_open(js['open'])
+                            if 'cmd' in js:
+                                cmd = js['cmd']
+                                if cmd == 'reset':
+                                    machine.reset()
+                                elif cmd == 'sync':
+                                    print('sync')
+                                    bt.stop_scan()
+                                    get_cards(host = config['config_host'], mac = mac)
+                                    load_cards()
+                                    get_config(host = config['config_host'], mac = mac)
+                                    bt.scan()
+                    else:
+                        break
+                    await a.sleep_ms(50)        
+            except Exception as ex:
+                print(f'Exceptionn: {ex}')
+                #ec = ec+1
+                #if ec > 5:
+                #    machine.reset()
+                await a.sleep(10)
+        await a.sleep(60)
 
   
 async def main():    
@@ -359,6 +368,7 @@ load_cards()
 reader = wiegand(9, 8, on_card)
  
 a.run(main())
+
 
 
 

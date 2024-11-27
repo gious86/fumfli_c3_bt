@@ -14,11 +14,10 @@ class btr:
         self.lastt = time.ticks_ms()
         self.bt = bluetooth.BLE()
         
-        
     def bt_irq(self, event, data):
         if event == _IRQ_SCAN_RESULT:
             addr_type, addr, connectable, rssi, adv_data = data
-            if time.ticks_diff(time.ticks_ms(), self.lastt)>5000: #rssi > -75 and
+            if rssi > -75 and time.ticks_diff(time.ticks_ms(), self.lastt)>5000: #rssi > -75 and
                 d = bytes(adv_data)  #4:
                 i=d[2:18]
                 if i==self.id:
@@ -33,5 +32,8 @@ class btr:
         self.bt.irq(self.bt_irq)
         self.bt.active(True)
         self.bt.gap_scan(0, 30000, 30000)
+        
+    def stop_scan(self):
+        self.bt.gap_scan(None)
     
     
